@@ -1,0 +1,71 @@
+# LaTeX temporary files
+*.aux
+*.log
+*.toc
+*.latexmk
+*.fls
+*.dvi
+*blx.bib
+
+# PDF output - usually a bad idea to keep this in Git
+*.pdf
+
+## Build tool auxiliary files:
+*.fdb_latexmk
+*.synctex
+*.synctex(busy)
+*.synctex.gz
+*.synctex.gz(busy)
+*.pdfsync
+
+# SyncTeX
+*.synctex.gz
+
+## Core latex/pdflatex auxiliary files:
+*.aux
+*.lof
+*.log
+*.lot
+*.fls
+*.out
+*.toc
+*.fmt
+*.fot
+*.cb
+*.cb2
+.*.lb
+
+## Intermediate documents:
+*.dvi
+*.xdv
+*-converted-to.*
+
+# LaTeX Beamer
+*.snm
+*.vrb
+*.nav
+*.out
+
+# BibTeX
+*.bbl
+*.blg
+*.xml
+*.bcf
+
+
+# Byte-compiled / optimized / DLL files
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.p
+
+*.vscode/
+
+*.zip
+*.csv
+
+*.RData
+*.Rhistory
+
+data/
