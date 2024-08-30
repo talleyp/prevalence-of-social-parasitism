@@ -20,17 +20,19 @@ plot_logistic_curve = function(log_mod,file){
 
 } 
 
-tab <- read.table("table17-2.out",sep=' ',col.names=c('R0','R1','R2','survive'))
+tab <- read.table("../data/logistic_regression/poisson-table-score-full.out",sep=' ',col.names=c('R0','R1','R2','survive'))
 
 mylogit <- glm(survive ~ R1, data=tab, family=binomial("logit"))
 summary(mylogit)
 hltest(mylogit)
-plot_logistic_curve(mylogit, 'pois-pred.out')
+plot_logistic_curve(mylogit, '../data/logistic_regression/pois-pred-score-full.out')
 
-dens <- read.table("sweep.out",sep=' ',col.names=c('survive','m'))
+
+
+dens <- read.table("../data/logistic_regression/sweep.out",sep=' ',col.names=c('survive','m'))
 
 mylogit <- glm(survive ~ m, data=dens, family=binomial("logit"))
 summary(mylogit)
 hltest(mylogit)
 
-plot_logistic_curve(mylogit,'sweep-pred.out')
+plot_logistic_curve(mylogit,'../data/logistic_regression/sweep-pred.out')

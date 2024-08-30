@@ -5,12 +5,55 @@ from scipy.integrate import solve_ivp,dblquad
 from scipy.spatial import distance_matrix
 from scipy.spatial.distance import cdist
 from itertools import product
+from scipy.special import expit
+import time
+
+class RESPONSE:
+    def __init__(self,r):
+        self.tbase = 1500
+        self.aspan = 1
+        self.Kr    = .43
+        self.Ka    = 2**7
+        if r==0:
+            # print('Non-Responsive to Raiding')
+            self.theta=self.t1
+        elif r==1:
+            # print("Raiding induces gyne production")
+            self.theta=self.t2
+        else:
+            # print("Raiding inhibits gyne production")
+            self.theta=self.t3
+
+    def t1(self,x):
+        return self.tbase
+
+    def t2(self,x):
+        return self.tbase/(1+(x/self.Kr)**2)
+
+    def t3(self,x):
+        return self.tbase*(1+(x/self.Kr)**2)
+
+    def alpha(self,x,y):
+        t = self.theta(y)
+        a = expit((t-x)/self.Ka)
+        return self.aspan*a + (1-self.aspan)
+
+class PRESPONSE:
+    def __init__(self):
+        self.tbase = 8000
+        self.aspan = 1
+        self.Ka    = 2**9
+
+    def alpha(self,x):
+        t = self.tbase
+        a = expit((t-x)/self.Ka)
+        return self.aspan*a + (1-self.aspan)
 
 class ANT:
     def __init__(self,
                     p,
                 ) -> None:
-        self.c  = p['cf']
+        self.c  = p['c']
         self.rq  = p['rq']
         self.re  = p['re']
         self.rl  = p['rl']
@@ -21,10 +64,12 @@ class ANT:
         self.mur = p['mur']
         self.Km  = p['Km']
         self.Kf  = p['Kf']
+        self.Kb  = p['Kb']
         self.M   = p['M']
         self.B   = p['B']
         self.D   = p['D']
         self.lamp = p['lamp']
+        self.fradius = p['fradius']
         self.land = p['landscape']
         self.comp = p['competition']
         if 'weights' in p.keys():
@@ -32,53 +77,67 @@ class ANT:
         self.land_disk = self.boundaries()
         self.scale = p['scale']
         self.pre_p = p['pre_p']
+        self.alp  = RESPONSE(p['alp']).alpha 
+        self.alpp  = PRESPONSE().alpha 
+        self.eta  = p['eta']
+        self.rs   = np.zeros(self.M)
         pass
 
     def __call__(self, t, z) -> np.array:        
-        if self.pre_p:
-            Zf = z.reshape((self.M,5))
-            Ft = Zf[:,-1]
-            A = self.voronoi_areas(Ft)
-            self.cf = self.c * A/(10+A)
-            return self.f_de(Zf,t)
         return self.full_de(z)
     
     def full_de(self,z) -> np.array:
-        Zf = z[:self.M*5].reshape((self.M,5))
-        Zp = z[self.M*5:]
-        Ft = np.hstack((Zf[:,-1],Zp[2]))
-        A = self.voronoi_areas(Ft)
-        self.cf = self.c * A/(10+A)
-        
-        out =  np.hstack((self.f_de(Zf),self.p_de(Zp)))
-        return out
+        if self.pre_p:
+            Zf = z.reshape((self.M,5))
+            self.alphaf = self.alp(Zf[:,3]+Zf[:,4],self.rs)
+            Ft = Zf[:,-1]
+            if self.comp:
+                A = self.voronoi_areas(Ft)
+                self.cf = self.c * A/(10+A)
+            else:
+                self.cf = self.c*np.ones(self.M)
+            return self.f_de(Zf)
+        else:
+
+            Zf = z[:self.M*5].reshape((self.M,5))
+            Zp = z[self.M*5:]
+
+            self.alphaf = self.alp(Zf[:,3]+Zf[:,4],self.rs)
+            Ft = np.hstack((Zf[:,-1],Zp[2]))
+            if self.comp:
+                A = self.voronoi_areas(Ft)
+                self.cf = self.c *A/(10+A)
+            else:
+                self.cf = self.c * np.ones(self.M)
+            out =  np.hstack((self.f_de(Zf),self.p_de(Zp)))
+            return out
     
     def f_de(self,z,t=1) -> np.array:
-        # formica colony equations
         E = z[:,0]
         L = z[:,1]
         P = z[:,2]
         N = z[:,3]
         F = z[:,4]
-
-        phiT = np.array([self.phi(self.cf[i]*F[i], L[i]+1) for i in range(self.M)])
-        B = E+L+P
+        alpha = self.alphaf
         
+
+        B = E+(P+L)*(alpha+self.eta*(1-alpha))
+        phiT = self.phi(self.cf[:self.M]*F, L*(alpha+self.eta*(1-alpha))+1)
+
         f = lambda x,y: 1/(1+(x/y)**2) 
-        g = lambda x: np.log(10/9)*(8/x)**2
-        nb = np.array([g(N[i]/B[i]) for i in range(self.M)])
-        fn = np.array([f(F[i]/N[i], self.Kf) for i in range(self.M)])
+        g = lambda x: np.log(10/9)*(self.Kb/x)**2
+        nb = g(N/B) 
+        fn = f(F/N, self.Kf)
         
         dE = phiT*self.rq - self.re*E*(1+nb)
         dL = self.re*E - self.rl*L*(phiT+nb) 
         dP = phiT*self.rl*L - P*self.rp*(1+nb) 
-        dN = self.rp*P - N*fn*(self.mun+self.A) 
+        dN = self.rp*P*alpha - N*fn*(self.mun+self.A) 
         dF = N*fn*self.A - F*self.muf
 
         return np.vstack((dE,dL,dP,dN,dF)).T.flatten()
 
     def p_de(self,z,t=1) -> np.array:
-        # polyergus colony equations
         P = z[0]
         N = z[1]
         F = z[2]
@@ -90,8 +149,10 @@ class ANT:
         R = z[7]
 
         cfT = self.cf[-1]
-        phiT = self.phi(cfT*F, L+1)
-        B = E+L+P+U
+        alpha = self.alpp(N+S+F+R)
+
+        phiT = self.phi(cfT*F, L*(alpha+self.eta*(1-alpha))+1)
+        B = E+P+(L+U)*(alpha+self.eta*(1-alpha))
 
         f = lambda x,y: 1/(1+(x/y)**2) 
         g = lambda x: np.log(10/9)*(8/x)**2
@@ -105,7 +166,7 @@ class ANT:
         dE = phiT*self.rq - self.re*E*(1+nb)
         dL = self.re*E - self.rl*L*(phiT+nb) 
         dU = phiT*self.rl*L - U*self.rp*(1+nb)
-        dS = self.rp*U - S*fn*(self.mun+self.B)
+        dS = self.rp*U*alpha - S*fn*(self.mun+self.B)
         dR = S*fn*self.B - self.mur*R
         
         return np.hstack((dP,dN,dF,dE,dL,dU,dS,dR)) 
@@ -125,7 +186,7 @@ class ANT:
         return A*self.scale**2
     
     def make_grid(self) -> np.array:
-        alp = 1/1.8
+        alp = 1/self.fradius
         s = self.scale
         npoints = int(2*self.land/s)
         ## scale the points on grid for distance metrics
@@ -161,6 +222,7 @@ class ANT:
         F = z[forager_ind]
         S = z[-1]
         if S<1:
+            self.rs = np.zeros(self.M)
             return z,(-1,0,0)
         n_scouts = int(np.ceil(S*data['scout-p']))
 
@@ -192,13 +254,14 @@ class ANT:
         R = np.sum(rates)
         tau = np.random.exponential(1/R)
         if tau<np.random.exponential(1/(3/24)):
+            self.rs = rates/R
             c_ind = int(np.random.choice(locs,p=rates/R))
-            
             p_ind = int(5*c_ind+2)
             stolen = np.min((z[p_ind],S*data['prob-grab']))
             z[p_ind] -= stolen
-            z[-8] += stolen
+            z[-8] += stolen*self.alphaf[c_ind]
             return z,(c_ind,F[c_ind],stolen)
+        self.rs = np.zeros(rates.shape)
         return z,(-1,0,0)
 
     def boundaries(self) -> np.array:
@@ -262,13 +325,16 @@ class LAND:
             return self.mattern(data)
 
     def spatial_poisson2d(self,data):
-        M = data['M']
+        M = int(data['M'])
         D = (2*data['radius']*np.random.random((M,2)))+data['landscape']-data['radius']
         D = np.vstack((D,[0+data['landscape'],0+data['landscape']]))
         return M,D
     
     def spatial_poisson_point(self,data):
-        M = np.random.poisson(data['M'])
+        if M:
+            pass
+        else:
+            M = np.random.poisson(data['M'])
         D = (2*data['radius']*np.random.random((M,2)))+data['landscape']-data['radius']
         D = np.vstack((D,[0+data['landscape'],0+data['landscape']]))
         return M,D
@@ -341,79 +407,6 @@ class LAND:
         D = np.vstack((D,[0+data['landscape'],0+data['landscape']]))
         return M,D
 
-    def mattern(self,data):
-        # Simulate a Matern point process on a rectangle.
-        # Author: H. Paul Keeler, 2018.
-        # Website: hpaulkeeler.com
-        # Repository: github.com/hpaulkeeler/posts
-        # For more details, see the post:
-        # hpaulkeeler.com/simulating-a-matern-cluster-point-process/
-
-        # Simulation window parameters
-        xMin = 0
-        xMax = 2*data['landscape']
-        yMin = 0
-        yMax = 2*data['landscape']
-
-        # Parameters for the parent and daughter point processes
-
-        lambdaDaughter = data['lambdaDaughter']  # mean number of points in each cluster
-        lambdaParent = data['lambdaParent']/lambdaDaughter  # density of parent Poisson point process
-        radiusCluster =  data['radiusCluster'] # radius of cluster disk (for daughter points)
-
-        # Extended simulation windows parameters
-        rExt = radiusCluster  # extension parameter -- use cluster radius
-        xMinExt = xMin - rExt
-        xMaxExt = xMax + rExt
-        yMinExt = yMin - rExt
-        yMaxExt = yMax + rExt
-        # rectangle dimensions
-        xDeltaExt = xMaxExt - xMinExt
-        yDeltaExt = yMaxExt - yMinExt
-        areaTotalExt = xDeltaExt * yDeltaExt  # area of extended rectangle
-
-        # Simulate Poisson point process for the parents
-        numbPointsParent = np.random.poisson(areaTotalExt * lambdaParent)  # Poisson number of points
-        # x and y coordinates of Poisson points for the parent
-        xxParent = xMinExt + xDeltaExt * np.random.uniform(0, 1, numbPointsParent)
-        yyParent = yMinExt + yDeltaExt * np.random.uniform(0, 1, numbPointsParent)
-
-        # Simulate Poisson point process for the daughters (ie final poiint process)
-        numbPointsDaughter = np.random.poisson(lambdaDaughter, numbPointsParent)
-        numbPoints = sum(numbPointsDaughter)  # total number of points
-
-        # Generate the (relative) locations in polar coordinates by
-        # simulating independent variables.
-        theta = 2 * np.pi * np.random.uniform(0, 1, numbPoints)  # angular coordinates
-        rho = radiusCluster * np.sqrt(np.random.uniform(0, 1, numbPoints))  # radial coordinates
-
-        # Convert from polar to Cartesian coordinates
-        xx0 = rho * np.cos(theta)
-        yy0 = rho * np.sin(theta)
-
-        # replicate parent points (ie centres of disks/clusters)
-        xx = np.repeat(xxParent, numbPointsDaughter)
-        yy = np.repeat(yyParent, numbPointsDaughter)
-
-        # translate points (ie parents points are the centres of cluster disks)
-        xx = xx + xx0
-        yy = yy + yy0
-
-        # thin points if outside the simulation window
-        booleInside = ((xx >= xMin) & (xx <= xMax) & (yy >= yMin) & (yy <= yMax))
-        # retain points inside simulation window
-        xx = xx[booleInside]  
-        yy = yy[booleInside]
-        ## thin points to reduce computational cost
-        booleThin = np.random.choice(np.arange(xx.shape[0]),data['M'])
-        xx=xx[booleThin]
-        yy=yy[booleThin]
-        M = data['M']
-        D = np.zeros((M,2))
-        D[:,0] = xx
-        D[:,1] = yy
-        D = np.vstack((D,[0+data['landscape'],0+data['landscape']]))
-        return M,D
     
 class PROB:
     def __init__(self) -> None:
@@ -478,11 +471,11 @@ def start_values(M) -> np.array:
     return tmp
 
 def start_values_rnd(M) -> np.array:
-    E = 291
-    L = 127
-    P = 363
-    N = 5293
-    F = 648
+    E = 172.98172512
+    L = 56.14696041
+    P = 94.97668089
+    N = 1154.37465288
+    F = 138.5249578
     scale = np.random.random((M,1))
     col = np.array([E,L,P,N,F])
     tmp = np.hstack((col*scale[0],col*scale[1]))
@@ -520,10 +513,11 @@ def run_once(
         z0: np.array, 
         t_start: int = 0,
         t_end: int = 1000,
-        nsamp=300) -> np.array:
+        method='Radau') -> np.array:
        
-    sol = solve_ivp(model, [0,t_end], z0,method="Radau", dense_output=True)
-    t = np.linspace(t_start, t_end, nsamp)
+    sol = solve_ivp(model, [0,t_end], z0, method=method,dense_output=True)
+    ## Dense output true
+    t = np.linspace(t_start, t_end, 300)
     z = sol.sol(t)
 
     return t,z

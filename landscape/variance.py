@@ -5,24 +5,28 @@ import numpy as np
 import utils as m
 from parameter import data
 from pathlib import Path
+import pickle
 import multiprocess as mp
+import ctypes
 
-def run_sim(mdl,N,data,Mcol,x,space_type='ring'):
+def run_sim(mdl,N,p,x,M,space_type='ring'):
     # Pre-run setup
-    data['M']= Mcol
     L = m.LAND()
-    _,data['D'] =L(space_type,data)
-    data['pre_p']=True
-    data['M'] = data['M']+1 # because P is F for now
-    z0 = m.start_values(data['M'])
-    data['weights'] = mdl(data).make_grid()
+    p['M'] = M
+    p['M'],p['D'] =L(space_type,p)
+
+    p['pre_p']=True
+    p['M'] = p['M']+1 # because P is F for now
+    z0 = m.start_values(p['M'])
+    p['weights'] = mdl(p).make_grid()
+
     # competition effects
-    tpre,zpre = m.run_once(mdl(data),z0,t_end=365*10)
+    tpre,zpre = m.run_once(mdl(p),z0,t_end=365*5)
     
     # invasion of polyergus starts
-    data['pre_p']=False
-    data['M'] = data['M']-1 # F back to P
-    z0 = m.poly_start(zpre[:,-1],data['M'])
+    p['pre_p']=False
+    p['M'] = p['M']-1 # F back to P
+    z0 = m.poly_start(zpre[:,-1],p['M'])
 
     # Set up polyergus dynamic saving
     Z = np.zeros((z0.shape[0],N+2))
@@ -32,11 +36,11 @@ def run_sim(mdl,N,data,Mcol,x,space_type='ring'):
     rfin=2*N
 
     # first raid
-    z = z0+ mdl(data).full_de(z0)
+    z = z0+ mdl(p).full_de(z0)
     
     z[z<0]=0.001 # kill off basically dead colonies
-    M = mdl(data)
-    Z[:,1],cind = M.discrete_raid(data,z)
+    M = mdl(p)
+    Z[:,1],cind = M.discrete_raid(p,z)
     T[1] = 1 
 
     # repeat N times 
@@ -46,7 +50,7 @@ def run_sim(mdl,N,data,Mcol,x,space_type='ring'):
         z_tmp[z_tmp<0]=0.001
         T[r] = T[r-1]+1
         Z[:,r] = z_tmp.T
-        Z[:,r],cind = M.discrete_raid(data,Z[:,r])
+        Z[:,r],cind = M.discrete_raid(p,Z[:,r])
         raid_ind.append(cind[0])
         # equilibrium rules
         rules = [
@@ -58,51 +62,59 @@ def run_sim(mdl,N,data,Mcol,x,space_type='ring'):
             rfin = r
             str_out = 'lo'
         elif all(rules): # landscape at equilibrium
-            rfin = r+1
+            rfin = r
             str_out = 'hi'
         if r>=rfin: # we are done
             T = T[:r+1]
             Z = Z[:,:r+1]
             break
-    print(data['M'],str_out)
-    C = m.get_colony_size(Z,data['M'],data['pre_p'])
-    
-    np.savetxt(f"data/land-dist/{data['M']}-{x}-Z.out",C[:,-1],delimiter=',')
-    np.savetxt(f"data/land-dist/{data['M']}-{x}-D.out",data['D'],delimiter=',')
+    print(p['M'],str_out)
+    C = m.get_colony_size(Z,p['M'],p['pre_p'])
+
+    np.savetxt(f'data/poisson/{x}-Z.out',C[:,-1],delimiter=',')
+    np.savetxt(f'data/poisson/{x}-D.out',p['D'],delimiter=',')
+
     return 0
 
 def to_numpy_array(shared_array, shape):
     '''Create a numpy array backed by a shared memory Array.'''
-    arr = np.ctypeslib.as_array(shared_array)
-    return arr.reshape(shape)
+    A = np.ctypeslib.as_array(shared_array)
+    return A.reshape(shape)
 
-def init_worker():
+# def init_worker(shared_arrayZ,shared_arrayD,shapeZ,shapeD):
+def init_worker(shared_arrayM, shapeM):
     '''
     Initialize worker for processing:
-    Create the numpy array from the shared memory Array for each process in the pool.
+    Give access to shared M array
     '''
-    np.random.seed()
+    global Marr
+    Marr = to_numpy_array(shared_arrayM, shapeM)
+    
 
 
-def worker_fun(x, y):
+def worker_fun(x):
     '''worker function'''
-    run_sim(mdl,Nraids,data,Ms[y],x,space_type='poisson')
+    run_sim(mdl,Nraids,data.copy(),x,Marr[x],space_type)
 
 mdl = m.ANT
 Nraids = 365*100
-Nsims = 40
+Nsims = 500
 space_type = 'poisson'
 
 data['radius'] = 70
-data['alp'] = 0
-Mmin = 1
-Mmax = 90
-Ms = np.arange(Mmax,Mmin-1,-1)
+M = 46
+data['M'] = M
 
-shape = (Nsims,Ms.shape[0])
+shapeM = (Nsims,)
 
-x_y_values = [(x, y) for x in range(shape[0]) for y in range(shape[1])]
 
-pool = mp.Pool(40,maxtasksperchild=1,initializer=init_worker)
-pool.starmap(worker_fun, x_y_values)
+shared_arrayM = mp.Array(ctypes.c_int, np.random.poisson(data['M'],Nsims), lock=False)
+x_values = [x for x in range(Nsims)]
+
+pool = mp.Pool(60,
+               maxtasksperchild=1,
+               initializer=init_worker, 
+               initargs=(shared_arrayM, shapeM)
+            )
+pool.map(worker_fun, x_values)
 

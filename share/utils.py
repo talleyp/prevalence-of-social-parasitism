@@ -1,27 +1,57 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from scipy.optimize import fsolve
+from scipy.special import expit
 from parameter import *
 
-class ANT2:
+class RESPONSE:
+    def __init__(self,r):
+        self.tbase = 1500
+        self.aspan = 1
+        self.Kr    = 0.03
+        self.Ka    = 2**7
+        if r==0:
+            # print('Non-Responsive to Raiding')
+            self.theta=self.t1
+        elif r==1:
+            print("Raiding induces gyne production")
+            self.theta=self.t2
+        else:
+            print("Raiding inhibits gyne production")
+            self.theta=self.t3
+
+    def t1(self,x):
+        return self.tbase
+
+    def t2(self,x):
+        return self.tbase/(1+(x/self.Kr)**2)
+
+    def t3(self,x):
+        return self.tbase*(1+(x/self.Kr)**2)
+
+    def alpha(self,x,y):
+        t = self.theta(y)
+        a = expit((t-x)/self.Ka)
+        return self.aspan*a + (1-self.aspan)
+
+class ANT:
     def __init__(self,
                     p,
                 ) -> None:
-        self.cst = p['cst']
-        self.prd = p['prd']
-        self.cf  = p['c']
-        self.rq  = p['rq']
-        self.re  = p['re']
-        self.rl  = p['rl']
-        self.rp  = p['rp']
-        self.rn  = p['rn']
-        self.rs  = p['rs']
-        self.A   = p['A']
-        self.mun = p['mun']
-        self.muf = p['muf']
-        self.Km  = p['Km']
-        self.Kf  = p['Kf']
+        self.c    = p['c']
+        self.rq   = p['rq']
+        self.re   = p['re']
+        self.rl   = p['rl']
+        self.rp   = p['rp']
+        self.rs   = p['rs']
+        self.A    = p['A']
+        self.mun  = p['mun']
+        self.muf  = p['muf']
+        self.Km   = p['Km']
+        self.Kf   = p['Kf']
+        self.alp  = RESPONSE(p['alp']).alpha 
+        self.Kb   = p['Kb']
+        self.eta  = p['eta']
         pass
 
     def __call__(self, t, z) -> np.array:
@@ -36,47 +66,36 @@ class ANT2:
 
         if N<0.01:
             return np.hstack((0,0,0,0,0)) 
+        
+        alpha = self.alp(N+F,self.rs)
+        # print('Percent gynes',1-alpha)
 
-        cfT = self.cf#*self.food(t)
-        phiT = self.phi(cfT*F, L+1)
-        B = E+L+P
+        phiT = self.phi(self.c*F, L*(alpha+self.eta*(1-alpha))+1)
+        B = E+(alpha+self.eta*(1-alpha))*(L+P)
 
         f = lambda x,y: 1/(1+(x/y)**2) 
-        # f = lambda x,y: np.exp(-x**2/(y**2))
-        g = lambda x: np.log(10/9)*(8/x)**2
-        # h = lambda x,y: np.exp(-x/y)
+        g = lambda x: np.log(10/9)*(self.Kb/x)**2
         nb = g(N/B) 
         fn = f(F/N, self.Kf)
-        # munT = self.mun*f(F/N,self.Kf)
-        # print(mun)
-        
+
         dE = phiT*self.rq - self.re*E*(1+nb)
         dL = self.re*E - self.rl*L*(phiT+nb) 
         dP = phiT*self.rl*L - P*(self.rp+self.rs+nb*self.rp)
-        dN = self.rp*P - N*fn*(self.A+self.mun) 
+        dN = self.rp*P*alpha - N*fn*(self.A+self.mun) 
         dF = N*fn*self.A - F*self.muf
+
+        # print(1/(fn*(self.A+self.mun)) )
 
         return np.hstack((dE,dL,dP,dN,dF)) 
 
     def phi(self,x,y):
         return (x/y)/(self.Km+x/y)
     
-    def sigma(self,x,y):
-        return 0.5*(1-np.tanh(x-y))
     
-    def food(self,t):
-        return 1 if self.cst else 1*(np.sin(t*np.pi/self.prd))+1
-    
-    def rho(self,x,y):
-        return x/(x+y)
-    
-def death(t,y) -> np.array:
-    return np.sum(y)-1
-    
-def start_values(m, t_end = 10000) -> np.array:
-    tmp = [ 290.00085115,  126.02680938,  357.28317317, 5109.96031245,  701.0198493 ]
+def start_values() -> np.array:
+    tmp = np.array([180, 57, 100, 1200, 150. ])
     # return tmp
-    return [x*.5 for x in tmp]# fsolve(m.de,tmp)
+    return tmp
 
 def run_once(
         model,

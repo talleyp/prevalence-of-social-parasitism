@@ -5,6 +5,8 @@ import matplotlib as mpl
 from sklearn.linear_model import LogisticRegression
 from sklearn import metrics
 from scipy.optimize import curve_fit
+import json
+from parameter import data
 
 def deviance(X, y, model):
     return 2*metrics.log_loss(y, model.predict_proba(X), normalize=False)
@@ -36,9 +38,9 @@ def make_table(files,R0,R1):
     for file in files:
         D = np.loadtxt(file,delimiter=',')
         
-        R = D-45
+        R = D-offset
         R = np.sqrt( np.sum(np.square(R),axis=1) )
-        R_list.append(R)
+        # R_list.append(R)
         Zfile = file.replace("D","Z")
         Z = np.loadtxt(Zfile,delimiter=',')
         Z_outcome = [1 if x>500 else 0 for x in Z[:-1]]
@@ -49,31 +51,48 @@ def make_table(files,R0,R1):
         R_dict[Z_outcome[-1]].append(R)
     return table, R_dict
 
-folder = 'data/poisson/'
-R_list = []
+folder = '../data/landscape/poisson/'
+folder2 = './data/landscape/poisson-2/'
 outcome = []
-offset = 45
+offset = data['landscape']
 files = glob.glob(f'{folder}*-D.out')
+files2 = glob.glob(f'{folder2}*-D.out')
+files.extend(files2)
 
-score = .75
-dev = 500
-R0s = np.arange(5,22)
+score = .85
+dev = 700
+R0s = np.arange(1,60)
+R0max_s = 0
+R1max_s = 0
+R0max_d = 0
+R1max_d = 0
 for R0 in R0s:
-    R1s = np.arange(R0+1,45)
+    R1s = np.arange(R0+1,101)
     for R1 in R1s:
-        table = make_table(files,R0,R1)
+        table,_ = make_table(files,R0,R1)
         x = table[:,1].reshape(-1, 1)
-        y = table[:,-1]
+        y = table[:,-1]#.reshape(-1, 1)
         clf = LogisticRegression().fit(x,y)
         score_n = clf.score(x,y)
         dev_n = deviance(x,y,clf)
         if score_n>score:
             score = score_n
             print(R0,R1,score,dev_n)
-        if dev_n>dev:
+            R0max_s = R0
+            R1max_s = R1
+        if dev_n<dev:
             dev = dev_n
             print(R0,R1,score_n,dev_n)
+            R0max_d = R0
+            R1max_d = R1
 
-table,d = make_table(files,16,43)
 
-np.savetxt('table16.out',table)
+R0max_s = 23
+R1max_s = 73
+
+
+table,d = make_table(files,R0max_s,R1max_s)
+print(R0max_s,R1max_s)
+np.savetxt('../data/landscape/tables/poisson-table-score-full-test.out',table)
+np.savetxt('../data/logistic_regression/poisson-table-score-full-test.out',table)
+

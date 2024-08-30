@@ -1,48 +1,92 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from scipy.optimize import fsolve
+from scipy.special import expit
+
+class RESPONSE:
+    def __init__(self,r):
+        self.tbase = 1500
+        self.aspan = 1.
+        self.Kr    = 0.0208
+        self.Ka    = 2**7
+        if r==0:
+            # print('Non-Responsive to Raiding')
+            self.theta=self.t1
+        elif r==1:
+            print("Raiding induces gyne production")
+            self.theta=self.t2
+        else:
+            print("Raiding inhibits gyne production")
+            self.theta=self.t3
+
+    def t1(self,x):
+        return self.tbase
+
+    def t2(self,x):
+        return self.tbase/(1+(x/self.Kr)**2)
+
+    def t3(self,x):
+        return self.tbase*(1+(x/self.Kr)**2)
+
+    def alpha(self,x,y):
+        t = self.theta(y)
+        a = expit((t-x)/self.Ka)
+        return self.aspan*a + (1-self.aspan)
+
+class PRESPONSE:
+    def __init__(self):
+        self.tbase = 8000
+        self.aspan = 1
+        self.Ka    = 2**8
+
+    def alpha(self,x):
+        t = self.tbase
+        a = expit((t-x)/self.Ka)
+        return self.aspan*a + (1-self.aspan)
+
 
 class ANT:
     def __init__(self,
                     p,
                 ) -> None:
-        self.cst = p['cst']
-        self.prd = p['prd']
-        self.cf  = p['c']
-        self.rq  = p['rq']
-        self.re  = p['re']
-        self.rl  = p['rl']
-        self.rp  = p['rp']
-        self.rs  = p['rs']
-        self.A   = p['A']
-        self.mun = p['mun']
-        self.muf = p['muf']
-        self.mur = p['mur']
-        self.Km  = p['Km']
-        self.Kf  = p['Kf']
-        self.M   = p['M']
-        self.B   = p['B']
+        self.c    = p['c']
+        self.rq   = p['rq']
+        self.re   = p['re']
+        self.rl   = p['rl']
+        self.rp   = p['rp']
+        self.rs   = p['rs']
+        self.A    = p['A']
+        self.mun  = p['mun']
+        self.muf  = p['muf']
+        self.mur  = p['mur']
+        self.Km   = p['Km']
+        self.Kf   = p['Kf']
+        self.Kb   = p['Kb']
+        self.alp  = RESPONSE(p['alp']).alpha 
+        self.alpp  = PRESPONSE().alpha 
+        self.M    = p['M']
+        self.B    = p['B']
+        self.eta  = p['eta']
         pass
 
     def __call__(self, t, z) -> np.array:
+        return self.full_de(z,t)
+
+    def full_de(self,z,t=1) -> np.array:
         Zf = z[:5]
         Zp = z[5:]
-        self.raidT = self.raid(Zf[2],Zp[-1]) 
-        if np.sum(z)<1:
+
+        self.raidT = self.rs*Zp[-1]*Zf[2]
+        self.alphaf = self.alp(Zf[3]+Zf[4],self.rs*Zp[-1]/self.M)
+        # print(self.rs*Zf[2]/self.M)
+        
+        if np.sum(Zp)>1:
+            return np.hstack((self.f_de(Zf),self.p_de(Zp)))
+        elif np.sum(z)<1:
             return np.repeat(0,13)
-        elif np.sum(z[5:])<1:
+        else:
             return np.hstack((self.f_de(Zf,t),np.repeat(0,8)))
-
-        return np.hstack((self.f_de(Zf,t),self.p_de(Zp,t)))
-    
-    def full_de(self,z) -> np.array:
-        '''For implicit solving purposes'''
-        Zf = z[:5]
-        Zp = z[5:]
-        self.raidT = self.raid(Zf[2],Zp[-1]) 
-
-        return np.hstack((self.f_de(Zf),self.p_de(Zp)))
+            
     
     
     def f_de(self,z,t=1) -> np.array:
@@ -51,22 +95,24 @@ class ANT:
         P = z[2]
         N = z[3]
         F = z[4]
+        alpha = self.alphaf
+        # print(alpha,self.raidT)
 
-        cfT = self.cf
-        phiT = self.phi(cfT*F, L+1)
-        B = E+L+P
+        B = E+(P+L)*(alpha+self.eta*(1-alpha))
+        phiT = self.phi(self.c*F, L+1)
 
         f = lambda x,y: 1/(1+(x/y)**2) 
-        g = lambda x: np.log(10/9)*(8/x)**2
+        g = lambda x: np.log(10/9)*(self.Kb/x)**2
         nb = g(N/B) 
         fn = f(F/N, self.Kf)
-
         
         dE = phiT*self.rq - self.re*E*(1+nb)
         dL = self.re*E - self.rl*L*(phiT+nb) 
-        dP = phiT*self.rl*L - P*self.rp*(1+nb) - self.raidT/self.M
-        dN = self.rp*P - N*fn*(self.mun+self.A) 
+        dP = phiT*self.rl*L - P*self.rp*(1+nb) - self.raidT/self.M 
+        dN = self.rp*P*alpha - N*fn*(self.mun+self.A) 
         dF = N*fn*self.A - F*self.muf
+
+        # print(P*self.rp*(1+nb),self.raidT/self.M)
 
         return np.hstack((dE,dL,dP,dN,dF)) 
 
@@ -81,24 +127,25 @@ class ANT:
         S = z[6]
         R = z[7]
 
-        cfT = self.cf
-        phiT = self.phi(cfT*F, L+1)
-        B = E+L+P+U
+        alpha = self.alpp(N+S+F+R)
+
+        phiT = self.phi(self.c*F, L+1)
+        B = E+P+(L+U)*(alpha+self.eta*(1-alpha))
 
         f = lambda x,y: 1/(1+(x/y)**2) 
-        g = lambda x: np.log(10/9)*(8/x)**2
+        g = lambda x: np.log(10/9)*(self.Kb/x)**2
         nb = g(N/B) 
         fn = f(F/(N+S+R), self.Kf)
+        
 
-
-        dP = self.raidT  - P*self.rp*(1+nb) 
+        dP = self.raidT*self.alphaf  - P*self.rp*(1+nb) 
         dN = P*self.rp - N*fn*(self.mun+self.A) 
         dF = N*fn*self.A - F*self.muf
         
         dE = phiT*self.rq - self.re*E*(1+nb)
         dL = self.re*E - self.rl*L*(phiT+nb) 
         dU = phiT*self.rl*L - U*self.rp*(1+nb)
-        dS = self.rp*U - S*fn*(self.mun+self.B)
+        dS = self.rp*U*alpha - S*fn*(self.mun+self.B)
         dR = S*fn*self.B - self.mur*R
         
         return np.hstack((dP,dN,dF,dE,dL,dU,dS,dR)) 
@@ -106,32 +153,36 @@ class ANT:
     def phi(self,x,y):
         return (x/y)/(self.Km+x/y)
     
-    def raid(self,s,p):
-        return self.rs*s*p
+    
+    # def raid(self,s,p):
+    #     return self.rs*s*p
 
     
 def death(t,y) -> np.array:
     return np.sum(y)-1
     
 def start_values() -> np.array:
-    E = 3e2
-    L = 1.3e2
-    P = 4e2
-    N = 5.3e3
-    F = 6.5e2
+    E = 180
+    L = 57
+    P = 100
+    N = 1200
+    F = 150
     tmp = np.hstack((E,L,P,N,F,
                      P,N,F,
-                     E,L,P,F,F)
+                     0,0,0,0,0)
                     ) 
-    return tmp/2.
+    return tmp
 
 def run_once(
         model,
         z0: np.array, 
         t_start: int = 0,
-        t_end: int = 1000) -> np.array:
-        
-    sol = solve_ivp(model, [0,t_end], z0, method='Radau',dense_output=True)
+        t_end: int = 1000,
+        method='Radau') -> np.array:
+    
+    # model = m(rs,c,cst,rnM)
+    
+    sol = solve_ivp(model, [0,t_end], z0, method=method,dense_output=True)
     ## Dense output true
     t = np.linspace(t_start, t_end, 300)
     z = sol.sol(t)
@@ -139,19 +190,17 @@ def run_once(
     return t,z
 
 def plot_one_run(t:np.ndarray,z:np.ndarray,nplots:int = 0,title: str = 'Colony',xlab:str ='time'):
-    fig = plt.figure(nplots)
-    # g = plt.plot(t,z[0:-1,:].T,linewidth=2,alpha=0.75)
-    g = plt.plot(t,z.T,linewidth=2,alpha=0.75)
-    plt.ylim(bottom=0)    
-    plt.legend(iter(g), ('FC Egg','FC Larva','FC Pupa','FC Nurse','FC Forager',
-                         'PC F Pupa','PC F Nurse','PC F Forager',
-                         'PC Egg','PC Larva','PC Pupa','PC Slaver', 'PC Raider'))
-    plt.title(title)
+    # fig = plt.figure(nplots)
+    # g = plt.plot(t,z.T,linewidth=2,alpha=0.75)
+    # plt.ylim(bottom=0)    
+    # plt.legend(iter(g), ('FC Egg','FC Larva','FC Pupa','FC Nurse','FC Forager',
+    #                      'PC F Pupa','PC F Nurse','PC F Forager',
+    #                      'PC Egg','PC Larva','PC Pupa','PC Slaver', 'PC Raider'))
+    # plt.title(title)
 
     nplots+=1
     FC = z[0:5,:]
     fig2 = plt.figure(nplots)
-
     g = plt.plot(t,FC.T,linewidth=2,alpha=0.75)
     plt.ylim(bottom=0)    
     plt.legend(iter(g), ('Egg','Larva','Pupa','Nurse','Forager'))
@@ -168,7 +217,7 @@ def plot_one_run(t:np.ndarray,z:np.ndarray,nplots:int = 0,title: str = 'Colony',
     plt.title('Polyergus colony')
 
     # plt.savefig('discrete-rs.png')
-    return fig,nplots+1
+    return nplots+1
 
 
 def plot_sum(
