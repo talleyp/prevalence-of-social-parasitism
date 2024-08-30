@@ -71,8 +71,8 @@ def run_sim(mdl,N,p,x,M,space_type='ring'):
     print(p['M'],str_out)
     C = m.get_colony_size(Z,p['M'],p['pre_p'])
 
-    np.savetxt(f'data/poisson/{x}-Z.out',C[:,-1],delimiter=',')
-    np.savetxt(f'data/poisson/{x}-D.out',p['D'],delimiter=',')
+    np.savetxt(f'../data/landscape/poisson/{x}-Z.out',C[:,-1],delimiter=',')
+    np.savetxt(f'../data/landscape/poisson/{x}-D.out',p['D'],delimiter=',')
 
     return 0
 

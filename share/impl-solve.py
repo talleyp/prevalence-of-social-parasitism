@@ -35,8 +35,6 @@ def run_param(k,vals,p):
     P = np.zeros((M,1))
     N = np.zeros((M,1))
     F = np.zeros((M,1))
-    # col_max = 0
-    # fnmax = (0,0)
     Fmax = 0
     max_ind = 0
     Fit = np.zeros(M)
@@ -79,7 +77,6 @@ def just_switch(key1,key2,vals1,vals2,title,xlab=''):
             vleg = v
         val_lab.append(f"{vleg}")
         F,max_ind = run_param(key1,vals1,p)
-        # c = np.sum(z,axis=0)
         
         axs.plot(vals1,F,linewidth=2,alpha=0.75,label=f'{key2}={vleg}')
         if F[max_ind]>1e-5:
@@ -89,10 +86,9 @@ def just_switch(key1,key2,vals1,vals2,title,xlab=''):
         vind+=1
         print(v,vals1[max_ind])
   
-    # axs.set_title(title,fontsize=24)
     axs.set_ylabel('Fitness')
     axs.legend() 
-    axs.set_xlabel('Switch rate A') #,fontsize=18
+    axs.set_xlabel('Switch rate A') 
     plt.tight_layout()
     plt.savefig(f'../figs/single-alpha.pdf',dpi=199)
     return fig

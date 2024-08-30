@@ -123,4 +123,4 @@ k = 0
 rtypes = ['neutral','positive','negative']
 data['alp'] = k
 
-biomass(mdl,Nraids,space_type,data.copy(),M_min=1,M_max=40,rt = rtypes[k],preload=True)
+biomass(mdl,Nraids,space_type,data.copy(),M_min=1,M_max=40,rt = rtypes[k],preload=False)
